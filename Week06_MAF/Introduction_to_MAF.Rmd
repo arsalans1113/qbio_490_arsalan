@@ -1,0 +1,234 @@
+---
+title: "Introduction to MAF"
+author: Erika Li, Jeanne Revilla, Mahija Mogalipuvvu, adapted from Nicole Black, Wade Boohar
+date: 07/17/22
+updated: 9/29/2025
+---
+
+***Deliverables***
+- upload this R Notebook to your GitHub and submit the link to your Repo on Brightspace
+- include ALL graphs or figures created in this assignment in a folder with your R notebook with descriptive file names.
+
+We encourage you to work with a partner. Therefore, it is okay if your answers are the same as your partner’s as long as everyone understands it and could explain it in their own words if asked. Each person must individually push their code to Github. *At the top of your R Notebook, write the name of you and your partner(s) as a comment.*
+
+***Complete the following coding activity and answer any following questions as comments in your R Notebook***
+
+In this assignment, you will need to use your skills learned in class to demonstrate your understanding of categorical variables and R data structures.
+
+*Pre-Assignment*
+Load all necessary packages, read in the clinical data.csv file you have in your analysis_data folder, and instantiate the MAF_object.
+```{r}
+if (!require("knitr"
+, quietly = TRUE))
+install.packages("knitr")
+if (!require("BiocManager"
+, quietly = TRUE))
+install.packages("BiocManager")
+BiocManager::install(version = "3.21")
+if (!require("TCGAbiolinks"
+, quietly = TRUE))
+BiocManager::install("TCGAbiolinks")
+if (!require("maftools"
+, quietly = TRUE))
+BiocManager::install("maftools")
+library(BiocManager)
+library(TCGAbiolinks)
+library(maftools)
+
+knitr::opts_knit$set(root.dir = normalizePath("/home1/arsalans/analysis_data"))
+clin_query <- GDCquery(project = "TCGA-BRCA"
+,
+data.category = "Clinical"
+,
+data.type = "Clinical Supplement"
+,
+data.format = 'BCR Biotab')
+GDCdownload(clin_query)
+clinical.BCRtab.all <- GDCprepare(clin_query)
+clinic <- clinical.BCRtab.all$clinical_patient_brca[-c(1,2),]
+
+colnames(clinic)[ colnames(clinic) == "bcr_patient_barcode" ] <- "Tumor_Sample_Barcode"
+maf_query <- GDCquery(project = "TCGA-BRCA"
+,
+data.category = "Simple Nucleotide Variation"
+,
+access = "open"
+,
+data.type = "Masked Somatic Mutation"
+,
+workflow.type = "Aliquot Ensemble Somatic Variant Merging and Masking")
+GDCdownload(maf_query, method = "api", files.per.chunk = 100)
+maf <- GDCprepare(maf_query)
+maf_object <- read.maf(maf = maf,
+                      clinicalData = clinic,
+                      isTCGA = TRUE)
+
+
+```
+
+It's useful to save your MAF_object, so that you don't have to go through the trouble of querying and preparing it everytime. The saveRDS function allows us to save an R object, allowing us to access it directly from our files. 
+```{r}
+saveRDS(maf_object, file = "/home1/arsalans/analysis_data/maf_object.rds")
+# ex. saveRDS(maf_object, file = "/home1/erika/490_cluster/analysis_data/maf_object.rds")
+```
+
+When you reopen a new R session and want to access your MAF_object, you can use the readRDS function to load the object back into a new variable.
+```{r}
+maf_object <- readRDS(file = "/home1/arsalans/analysis_data/maf_object.rds")
+# ex. MAF_object <- readRDS(file = "/home1/erika/490_cluster/analysis_data/maf_object.rds")
+```
+
+*1*
+Choose a clinical variable (or any variable from clin_rad or clin_drug) to separate your populations into two different groups and rewrite the column or create a new column with that variable as a factor. ***Do not use age or vital_status as your clinical variable.*** Hint: if your variable is continuous, you will need to determine your own cutoffs for the different levels of the factor. If your variable is categorical and has more than two possible values, choose the two that are the most common.
+```{r}
+rownames(clinic)
+colnames(clinic)
+clinic$race
+# I want to compare race and I will choose the two most prevalent races in the data set (white and black/African American -> abbr to simply "black" for length's sake).
+
+
+clinic_clean <- subset(clinic,
+                     race != "[Not Available]" & menopause_status != "[Not Available]")
+
+
+
+is.factor(clinic_clean)
+clinic_clean$race <- as.factor(clinic_clean$race)
+
+is.factor(clinic_clean$race)
+
+table(clinic_clean$race)
+
+clinic_subset <- subset(clinic_clean, race %in% c("WHITE", "BLACK OR AFRICAN AMERICAN"))
+levels(clinic_subset$race)
+levels(clinic_subset$race) <- c("NA", "AIAN", "ASIAN", "BLACK", "WHITE")
+table(clinic_subset$race)
+
+
+## I have chosen race as my first categorical variable, the two most common values for that are "WHITE" and "BLACK OR AFRICAN AMERICA" and I condensed the 2nd term into just "BLACK" for length's sake.
+```
+
+
+*2*
+Create a co-oncoplot with the top 10-20 (you choose) most mutated genes for the two groups. Pick one that has a large discrepancy in % mutated or type of mutations between the groups and research it. 
+Research it. What is the gene used for? Can you think of any reason for the discrepancy?
+```{r}
+
+# define mafs first
+grp1_ids <- clinic_subset$Tumor_Sample_Barcode[clinic_subset$race == "WHITE"]
+grp2_ids <- clinic_subset$Tumor_Sample_Barcode[clinic_subset$race == "BLACK OR AFRICAN AMERICAN"]
+
+# assessing values
+m1 <- subsetMaf(maf_object, tsb = grp1_ids, mafObj = TRUE)
+m2 <- subsetMaf(maf_object, tsb = grp2_ids, mafObj = TRUE)
+
+# selecting for only 20 of the top genes
+top_genesr <- head(getGeneSummary(m1)$Hugo_Symbol, 20)
+top_genesms <- head(getGeneSummary(m2)$Hugo_Symbol, 20)
+
+# creating co-oncoplot
+coOncoplot(m1 = m1,
+           m2 = m2,
+           m1Name = "WHITE", 
+           m2Name = "BLACK",
+           genes = top_genesr
+          )
+
+## save to files
+install.packages("ggplot2")
+library(ggplot2)
+ggsave("/home1/arsalans/490_cluster/Week06_MAF/co-oncoplot1.png")
+
+# When we look at the co-oncoplot, we find that PIK3CA and TP53 are some of the most highly mutated genes among both black and white patients. Investigating TP53, which is one of the most well known and highly oncogenic genes in the human body since it is a tumor-suppressing gene that is considered the "guardian of the genome". This title and function causes TP53 mutations to be highly carcinogenic and common in many cancer types. This explains why it is prevalent in both races, white and African American. As for the reason for the discrepancy between mutation rates in white versus black patients, it could likely just be a combination of genetic factors as higher TP53 mutation rates have also been observed in black patients in other cancer types such as gastric adenocarcinoma.
+```
+
+
+*3*
+Create a contingency table with your variable and chosen gene. Run a Fisher’s Exact Test between presence of mutations for that gene and your clinical variable. Create and save a mosaic plot. 
+Interpret the output of the Fisher’s Exact Test in terms of the odds ratio and p-value.
+```{r}
+tp53_mut <- ifelse(getSampleSummary(maf_object)$TP53 > 0, 1, 0)
+
+mutated_samples <- unique(maf_object@data$Tumor_Sample_Barcode[maf_object@data$Hugo_Symbol == "TP53"])
+
+clinic_subset <- subset(clinic_clean, race %in% c("WHITE", "BLACK OR AFRICAN AMERICAN"))
+clinic_df <- clinic_subset[, c("Tumor_Sample_Barcode", "race")]
+head(clinic_df)
+
+# Add a new column indicating mutation presence (Yes/No)
+clinic_df$TP53_status <- ifelse(clinic_df$Tumor_Sample_Barcode %in% mutated_samples, "Mutated", "Wildtype")
+
+head(clinic_df)
+
+table_tp53 <- table(clinic_df$race, clinic_df$TP53_status)
+table_tp53
+
+fisher_result <- fisher.test(table_tp53)
+fisher_result
+
+# OR = (a/c)/(b/d) = (63/196)/(106/512) = 0.32/0.21 = 1.55
+
+# Analyzing our odds ratio, we find that it is more common to find a TP53 mutation in the black or African American race than it is to find those same mutations in white patients. The Fischer's Exact Test p-value is outputted to be p = 0.01872 which means that the difference in presence of TP53 mutations between white and black patients is statistically significant.
+
+# mosaic plot
+mosaicplot(table_tp53)
+
+```
+
+
+*4*
+Subset your maf_object based on your chosen clinical variable and create a co-lollipop plot of your chosen gene divided between the two different clinical variable possibilities. Include descriptive names on your plot.
+Do you notice any difference in terms of mutations (e.g. sites, types, number) between the two populations?
+```{r}
+
+# define mafs first
+grp1_ids <- clinic_subset$Tumor_Sample_Barcode[clinic_subset$race == "WHITE"]
+grp2_ids <- clinic_subset$Tumor_Sample_Barcode[clinic_subset$race == "BLACK OR AFRICAN AMERICAN"]
+
+m1 <- subsetMaf(maf_object, tsb = grp1_ids, mafObj = TRUE)
+m2 <- subsetMaf(maf_object, tsb = grp2_ids, mafObj = TRUE)
+
+
+library(maftools)
+colnames(maf_object@data)
+lollipopPlot2(
+  m1,
+  m2,
+  gene = "TP53",
+  AACol1 = "HGVSp_Short",
+  AACol2 = "HGVSp",
+  m1_name = "WHITE",
+  m2_name = "BLACK",
+)
+
+## save to files
+install.packages("ggplot2")
+library(ggplot2)
+ggsave("/home1/arsalans/490_cluster/Week06_MAF/lollipopplot2.png")
+
+# there are some differences in the lollipop plot based off the different race of the individual. Such as White patients have just generally more mutations than Black patients while also simultaneouly having more mutations on the TP53 tetrad than black patients do. Some mutations are similar, where there are tow distinct missense mutations on the TP53 gene itself that causes the mutations in both Black and White patients. 
+```
+
+
+*5*
+Create your Overall_Survival_Status column and create a mafSurvival KM plot based on mutations in your chosen gene.
+Does there seem to be a difference? Hypothesize why or not based on the other analysis you did with the gene above.
+```{r}
+
+colnames(clinic_subset)
+clinic_subset$vital_status_alive <- ifelse(clinic_subset$vital_status == "Dead", 0, 1)
+mafSurvival(maf_object,
+  genes = "TP53",
+  clinicalData = clinic_subset,
+  time = "last_contact_days_to",
+  Status = "vital_status_alive",
+  isTCGA = FALSE
+)
+
+## save to files
+install.packages("ggplot2")
+library(ggplot2)
+ggsave("/home1/arsalans/490_cluster/Week06_MAF/KMSurvival1.png")
+
+# Realistically there is no difference between the survival curves between alive and dead patients. This is reflected from the curve itself being quite similar to each other and also the p-val being 0.36, meaning that any variation in the survival curve is due to chance and we cannot take that into account. This observation is likely due to the high prevalence of TP53 throughout somatic mutations. We find that regardless of patient vital status, more often than not they have a TP53 mutation, so our KM plot looks pretty similar for both groups of patients.
+```
