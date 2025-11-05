@@ -1,0 +1,204 @@
+---
+title: "Intro to Transcriptomics"
+author: Nicole Black, Wade Boohar, Kayla Xu
+date: 07/17/22
+updated: 10/18/24
+---
+
+***Deliverables***
+-Upload this R Notebook to your GitHub and submit the link to your Repo on Brightspace.
+-Include any graphs or figures created in this assignment in the folder with your R notebook with descriptive file names.
+
+Since this is an optional partner activity, it is okay if your answers are the same as your partner’s as long as everyone understands it and could explain it in their own words if asked. Each person must individually push their code to Github. *At the top of your R Notebook, write the name of you and your partner(s) as a comment.*
+
+***Complete the following coding activity and answer any following questions as comments in your R Notebook***
+
+In SummarizedExperiment Tutorial, you learned how to manipulate the SummarizedExperiment data structure and turn it into more readable dataframes, saving them as rna_counts, rna_clinical, and rna_genes. In this semi-guided assignment, you will use these dataframes to perform differential expression analysis based on tumor status.
+
+*Pre-Assignment*
+Use knitr function to set your working directory to your analysis_data folder in 490_cluster.
+```{r setup}
+ knitr::opts_knit$set(root.dir = normalizePath("/home1/arsalans/analysis_data"))
+```
+
+If DESeq2 is not already installed, install it now
+```{r setup}
+if (!require("DESeq2", quietly = TRUE))
+BiocManager::install("DESeq2")
+```
+
+Load in all necessary packages
+```{r setup}
+if (!require("knitr"
+, quietly = TRUE))
+install.packages("knitr")
+if (!require("BiocManager"
+, quietly = TRUE))
+install.packages("BiocManager")
+BiocManager::install(version = "3.21")
+if (!require("TCGAbiolinks"
+, quietly = TRUE))
+BiocManager::install("TCGAbiolinks")
+library(BiocManager)
+library(TCGAbiolinks)
+BiocManager::install("EnhancedVolcano")
+library(EnhancedVolcano)
+```
+
+
+
+*1*
+Read in the rna_clinical, rna_genes, and rna_counts dataframes which you made in the "SummarizedExperiment Guided Tutorial" R Notebook
+
+```{r setup}
+rna_clinical <- read.csv("brca_rna_clinical_data.csv", row.names = 1)
+
+rna_genes <- read.csv("brca_rna_gene_data.csv", row.names = NULL)
+
+rna_counts <- read.csv("brca_rna_count_data.csv", row.names = 1)
+
+```
+
+
+*2*
+In this assignment, you will run differential expression analysis comparing patient samples by whether the sample is from a tumor or normal tissue (this is the definition column in rna_clinical). You will need to choose a variable to control for covariance of: age and/or PAM50 subtype (paper_BRCA_Subtype_PAM50). 
+
+Manipulate those columns so that they are ready for differential expression analysis (hint: what kind of variables are they? what data type are they by default? do you need to handle unknown values?) Filter out genes with a total expression across all patients less than 1000.
+```{r}
+library(DESeq2)
+
+# variable of interest = tumor or normal tissue = shortLetterCode
+rna_clinical$shortLetterCode <- factor(rna_clinical$shortLetterCode)
+
+# same factoring for covariables
+rna_clinical$age_category <- factor(rna_clinical$age_category)
+rna_clinical$paper_BRCA_Subtype_PAM50 <- factor(rna_clinical$paper_BRCA_Subtype_PAM50)
+
+rna_clinical <- rna_clinical[!is.na(rna_clinical$shortLetterCode) &!is.na(rna_clinical$age_category),]
+none_va <- !is.na(rna_clinical$shortLetterCode) &!is.na(rna_clinical$age_category)
+rna_counts <- rna_counts[none_va,]
+
+x <- as.character(rna_clinical$paper_BRCA_Subtype_PAM50)
+x[is.na(x) | x == "[Not Available]"] <- "none"
+rna_clinical$paper_BRCA_Subtype_PAM50 <- factor(x)
+
+rna_clinical$paper_BRCA_Subtype_PAM50[apply(rna_clinical == "none", 1, any)]
+
+summary(rna_clinical$paper_BRCA_Subtype_PAM50)
+class(rna_clinical)
+
+rna_genes <- rna_genes$gene_id
+rna_counts <- rna_genes$gene_id
+view(rna_counts)
+rna_clinical # finish line
+
+
+# pre-filtering
+keep_genes1 <- rowSums(rna_counts) >= 10
+filtered_rna_counts <- rna_counts[keep_genes,]
+
+```
+
+
+```{r}
+#1
+# DESeq2 preprocessing
+library(DESeq2)
+
+#2
+# Setting variables
+rna_clinical <- as.data.frame(rna_se@colData) # clinical info
+rna_counts <- as.data.frame(rna_se@assays@data$unstranded) # gene count
+rna_genes <- as.data.frame(rna_se@rowRanges@elementMetadata) # 
+rownames(rna_genes) <- rna_genes$gene_id # match gene_id
+rownames(rna_counts) <- rna_genes$gene_id # match gene_id with rna_counts
+colnames(rna_counts) <- rownames(rna_clinical) # match rows of rna_clinical with columns of rna_counts
+
+#3
+# renaming values for ease of reading
+rna_clinical$shortLetterCode[rna_clinical$shortLetterCode=="TP"] <- "Tumor Primary"
+rna_clinical$shortLetterCode[rna_clinical$shortLetterCode=="NT"] <- "Normal Tissue"
+rna_clinical$shortLetterCode <- factor(rna_clinical$shortLetterCode)
+
+#4
+# removing NA values
+sLCmask <- !is.na(rna_clinical$shortLetterCode) # this is for removing NA values in sLC
+agemask <- !is.na(rna_clinical$age_at_index) # this is for removing NA values in age
+rna_clinical <- rna_clinical[sLCmask & agemask, ]
+
+#5
+# align samples with each other
+samemask  <- colnames(rna_counts) %in% rownames(rna_clinical)
+rna_counts <- rna_counts[, samemask] ## this is currently outputting 0 variables which is not right (check #2) ##
+rna_clinical <- rna_clinical[colnames(rna_counts), ]
+
+#6
+# this is the filter the genes and then realign them w rna_counts
+keep_genes2 <- rowSums(rna_counts) >= 1000 # filter genes with >=1000
+rna_counts <- rna_counts[keep_genes2, ]
+
+
+```
+
+
+*3*
+Perform the differential expression analysis, All you need to do is fill in the appropriate # terms
+```{r}
+
+# creating DESeq2 Data Set
+# creating dds variable
+dds <- DESeqDataSetFromMatrix(countData = rna_counts,
+                              colData = rna_clinical,
+                              design = ~ age_at_index + shortLetterCode)
+
+# Run DESeq2
+dds_obj <- DESeq(dds)
+
+resultsNames(dds_obj)
+
+# Get results comparing Tumor vs Normal
+results <- results(dds_obj, format = "DataFrame", 
+                  contrast = c("shortLetterCode", "Tumor Primary", "Normal Tissue"))
+
+results <- data.frame(results)
+
+```
+
+Prepare results dataframe for EnhancedVolcano plotting. Add two columns, "-log10(padj)" and "gene_name". Fill in these columns appropriately.
+```{r}
+
+# preprocessing
+padjmask <- !is.na(results$padj)
+results <- results[padjmask,]
+
+# labelling
+results$gene_name <- rna_genes$gene_name[match(rownames(results), rna_genes$gene_id)]
+results$minuslog10apdj <- -log10(padjmask)
+
+```
+
+*4*
+Now we will use the EnhancedVolcano package to plot our results. The code is already completed and should run without adjustment if all code up to here is correct.
+```{r}
+EnhancedVolcano(results,
+                lab = results$gene_name,
+                x = 'log2FoldChange',
+                y = 'minuslog10apdj',
+                title = 'Sample Definition: Tumor vs Normal Tissue',
+                pointSize = 1.0,
+                labSize = 5.0)
+
+library(ggplot2)
+ggsave("/home1/arsalans/490_cluster/Week07_Transcriptomics/EVPlot.png")
+```
+
+*5*
+# Explain what genes from each part of the Volcano Plot mean in terms of their significance and up/down regulation. 
+top-right genes: upregulated and significant
+bottom-right genes: upregulated but not significant
+top-left genes: downregulated and significant
+bottom-left genes: downregulated and not significant
+top-middle genes: significant but not up or down regulated
+bottom-middle genes: not significant nor up or down regulated
+
+Save the picture of the volcano plot (using either ggsave() or right clicking and manually downloading the image and push this .Rmd and the image to GitHub)rna_clinical$shortLetterCode <- factor(rna_clinical$shortLetterCode)
